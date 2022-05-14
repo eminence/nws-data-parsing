@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "nws-forecast-zones",
+    "xtask",
+]

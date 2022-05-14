@@ -1,5 +1,8 @@
 # NWS Forecast Zones
 
+[![Crate](https://img.shields.io/crates/v/nws-forecast-zones.svg)](https://crates.io/crates/nws-forecast-zones)
+[![Docs](https://docs.rs/nws-forecast-zones/badge.svg)](https://docs.rs/nws-forecast-zones)
+
 This crate contains information on the [NWS Public Forecast Zones](https://www.weather.gov/gis/PublicZones).
 A forecast zone is, to quote NWS:
 

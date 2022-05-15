@@ -77,7 +77,7 @@ impl ZoneSetEnum {
                         return true;
                     }
                 }
-                return false;
+                false
             }
         }
     }
@@ -201,7 +201,7 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                     }
                     State::ExpectingStateZ
                 } else if n.chars().all(|c| c.is_ascii_digit()) {
-                    let numeric = u16::from_str_radix(&n, 10)?;
+                    let numeric = n.parse()?;
                     // we now need to read 1 more character, which should either be a '-' or '>'
 
                     State::ExpectingListOrRange(state, numeric)
@@ -242,7 +242,7 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
             }
             State::ExpectingEndOfRange(state, numeric) => {
                 let code = read3!(chars);
-                let end_numeric = u16::from_str_radix(&code, 10)?;
+                let end_numeric = code.parse()?;
                 list.push(ZoneSetEnum::Range(
                     state[0..2].to_string(),
                     numeric,
@@ -260,7 +260,7 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                 if t.ends_with('Z') {
                     State::ExpectingTricode(t)
                 } else if t.chars().all(|c| c.is_ascii_digit()) {
-                    let numeric = u16::from_str_radix(&t, 10)?;
+                    let numeric = t.parse()?;
                     State::ExpectingListOrRange(state, numeric)
                 } else {
                     todo!("{:?}", t)

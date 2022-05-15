@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(x) if x == "products" => product_list::main(),
         _ => {
             println!("Usage:  cargo xtask <task>");
-            println!("");
+            println!();
             println!("Tasks is one of the following:  zones products");
             Ok(())
         }

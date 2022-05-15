@@ -18,8 +18,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut products = Vec::new();
 
-    for line in all_text.split("\n") {
-        let mut split = line.splitn(2, "\t");
+    for line in all_text.split('\n') {
+        let mut split = line.splitn(2, '\t');
         let trigram = split.next().unwrap();
         let desc = split.next().unwrap();
         products.push(Product { trigram, desc })

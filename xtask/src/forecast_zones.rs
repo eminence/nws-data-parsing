@@ -92,7 +92,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(enum_buf, "ForecastZone::{zonename} => crate::ZoneDetails {{state: \"{}\", zone: \"{}\", zone_numeric: {}, name: \"{}\", wfo: \"{}\" }},",
             zone.state,
             zone.zone,
-            zone.zone,
+            zone.zone.trim_start_matches('0'),
             zone.name,
             zone.wfo
     )?;
@@ -100,12 +100,13 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     writeln!(enum_buf, "}} }} }}")?;
 
     f.write_all(&enum_buf)?;
+    f.flush()?;
+    drop(f);
 
-    let cargo_bin = std::env::var("CARGO").unwrap();
-
-    let mut cargo = Command::new(cargo_bin)
-        .arg("fmt")
-        .arg("--")
+    let mut cargo = Command::new("rustfmt")
+        .arg("--config")
+        .arg("error_on_line_overflow=true,error_on_unformatted=true,max_width=200")
+        .arg("-v")
         .arg(gen_rs)
         .spawn()?;
 

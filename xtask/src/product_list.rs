@@ -78,7 +78,12 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     f.flush()?;
     drop(f);
 
-    let mut cargo = Command::new("rustfmt").arg("-v").arg(gen_rs).spawn()?;
+    let mut cargo = Command::new("rustfmt")
+        .arg("--config")
+        .arg("error_on_line_overflow=true,error_on_unformatted=true,max_width=200")
+        .arg("-v")
+        .arg(gen_rs)
+        .spawn()?;
 
     cargo.wait()?;
 

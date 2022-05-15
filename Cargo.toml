@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "nws-forecast-zones",
+    "nws-product-list",
     "xtask",
 ]

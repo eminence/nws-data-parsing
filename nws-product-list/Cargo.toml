@@ -1,0 +1,13 @@
+[package]
+name = "nws-product-list"
+version = "0.1.0"
+edition = "2021"
+license = "CC0"
+keywords = ["nws", "weather", "forecast", "zones"]
+readme = "README.md"
+description = "NWS public forecast zones"
+repository = "https://github.com/eminence/nws-data-parsing"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]

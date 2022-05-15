@@ -29,7 +29,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut zones = HashMap::new();
 
-    let mut reader = shapefile::Reader::from_path("z_22mr22/z_22mr22.shp")?;
+    let mut reader = shapefile::Reader::from_path("xtask/data/z_22mr22/z_22mr22.shp")?;
     for result in reader.iter_shapes_and_records() {
         let (_shape, mut record) = result?;
 

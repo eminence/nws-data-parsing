@@ -2,5 +2,6 @@
 members = [
     "nws-forecast-zones",
     "nws-product-list",
+    "wmo-abbrev-headings",
     "xtask",
 ]

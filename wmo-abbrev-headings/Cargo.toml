@@ -1,0 +1,11 @@
+[package]
+name = "wmo-abbrev-headings"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+keywords = ["wmo", "weather"]
+readme = "README.md"
+description = "Parser for WMO abbreviated headings"
+repository = "https://github.com/eminence/nws-data-parsing"
+
+[dependencies]

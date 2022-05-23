@@ -5,7 +5,7 @@ struct Product<'a> {
     desc: &'a str,
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> Result<(), anyhow::Error> {
     let gen_rs = Path::new("nws-product-list").join("src").join("gen.rs");
     let mut f = File::options()
         .create(false)

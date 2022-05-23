@@ -1,10 +1,13 @@
 use std::{collections::HashMap, fs::File, io::Write, path::Path, process::Command};
 
-// Reference: https://www.weather.gov/gis/CWABounds
+use anyhow::Context;
+use dbase::FieldValue;
+
+// Reference: https://www.weather.gov/gis/PublicZones
 
 #[derive(Debug)]
 struct Zone {
-    /// 2-letter state abbreviation
+    /// 2-letter state abbreviation (or some other 2-letter code for marine zones)
     state: String,
     /// 3-number zone identifier
     zone: String,
@@ -14,105 +17,214 @@ struct Zone {
     wfo: String,
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> Result<(), anyhow::Error> {
     // let me_x = latlon::parse_lng("71° 23' 8\" W").unwrap();
     // let me_y = latlon::parse_lat("41° 45' 4\" N").unwrap();
     // let me = Coordinate { x: me_x, y: me_y };
-    let gen_rs = Path::new("nws-forecast-zones").join("src").join("gen.rs");
 
-    let mut f = File::options()
-        .create(false)
-        .append(false)
-        .write(true)
-        .truncate(true)
-        .open(&gen_rs)?;
+    enum ZoneType {
+        /// Regular land zone
+        Zone,
+        CoastalMarine,
+        OffshoreMarine,
+        // HighSeasMarine,
+    }
 
-    let mut zones = HashMap::new();
+    let to_parse = [
+        (ZoneType::Zone, "z_22mr22/z_22mr22.shp", "gen.rs"),
+        (
+            ZoneType::CoastalMarine,
+            "mz22mr22/mz22mr22.shp",
+            "gen_mz.rs",
+        ),
+        (
+            ZoneType::OffshoreMarine,
+            "oz22mr22/oz22mr22.shp",
+            "gen_oz.rs",
+        ),
+        // The High Seas Marine data doesn't have an "ID" field, so we can't really do much with these files
+        // (
+        //     ZoneType::HighSeasMarine,
+        //     "hz30jn17/hz30jn17.shp",
+        //     "gen_hz.rs",
+        // ),
+    ];
 
-    let mut reader = shapefile::Reader::from_path("xtask/data/z_22mr22/z_22mr22.shp")?;
-    for result in reader.iter_shapes_and_records() {
-        let (_shape, mut record) = result?;
+    for (zone, src, dst) in to_parse {
+        let gen_rs = Path::new("nws-forecast-zones").join("src").join(dst);
+        let input_shp = src;
 
-        let state: String = record.remove("STATE").unwrap().try_into().unwrap(); // RI
-        let zone: String = record.remove("ZONE").unwrap().try_into().unwrap(); // 004
-        let name: String = record.remove("NAME").unwrap().try_into().unwrap(); // Eastern Kent
-        let wfo: String = record.remove("CWA").unwrap().try_into().unwrap(); // BOX
-        let zonename: String = record.remove("STATE_ZONE").unwrap().try_into().unwrap(); // RI004
+        let mut f = File::options()
+            .create(false)
+            .append(false)
+            .write(true)
+            .truncate(true)
+            .open(&gen_rs)
+            .context("Opening output gen rs file")?;
 
-        let zone = Zone {
-            state,
-            zone,
-            name,
-            wfo,
+        let mut zones = HashMap::new();
+
+        let mut reader = shapefile::Reader::from_path(Path::new("xtask/data").join(input_shp))?;
+        for result in reader.iter_shapes_and_records() {
+            let (_shape, mut record) = result?;
+
+            // if matches!(zone, ZoneType::HighSeasMarine) {
+            //     println!("{:?}", record);
+            // }
+
+            let zoneid: String = if matches!(zone, ZoneType::Zone) {
+                record.remove("STATE_ZONE").unwrap().try_into().unwrap() // RI004
+            } else {
+                let r = record.remove("ID").or_else(|| record.remove("id"));
+
+                if let Some(FieldValue::Character(Some(c))) = r {
+                    c
+                } else {
+                    continue;
+                }
+            };
+
+            let state: String = record
+                .remove("STATE")
+                .and_then(|f| f.try_into().ok())
+                .unwrap_or_else(|| zoneid[..2].to_string());
+            // RI
+
+            let zone_num: String = if matches!(zone, ZoneType::Zone) {
+                record.remove("ZONE").unwrap().try_into().unwrap() // 004
+            } else {
+                // extract the last 3 digits from ID
+                zoneid[3..6].to_string()
+            };
+
+            let name: String = record.remove("NAME").unwrap().try_into().unwrap(); // Eastern Kent
+            let wfo: String = if matches!(zone, ZoneType::Zone) {
+                record.remove("CWA").unwrap().try_into().unwrap() // BOX
+            } else {
+                record.remove("WFO").unwrap().try_into().unwrap()
+            };
+            // let zonename: String =
+
+            let zone = Zone {
+                state,
+                zone: zone_num,
+                name,
+                wfo,
+            };
+            zones.insert(zoneid, zone);
+        }
+
+        let mut all_zones: Vec<_> = zones.keys().collect();
+        all_zones.sort();
+
+        // also build a map between the 2-letter state and a list of numerics (to be used when generating a 'new'
+        // method for each enum)
+        let mut all_zone_map: HashMap<_, Vec<_>> = HashMap::new();
+        for zonename in &all_zones {
+            let zone = zones.get(*zonename).unwrap();
+            let two = zonename[0..2].to_string();
+            all_zone_map.entry(two).or_default().push(zone.zone.clone());
+        }
+
+        let mut enum_buf = Vec::new();
+        let enum_name = match zone {
+            ZoneType::Zone => "ForecastZone",
+            ZoneType::CoastalMarine => "CoastalMarineZone",
+            ZoneType::OffshoreMarine => "OffshoreMarineZone",
         };
-        zones.insert(zonename, zone);
+        writeln!(
+            enum_buf,
+            "#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)] pub enum {enum_name} {{",
+        )?;
+        for zonename in &all_zones {
+            let zone = zones.get(*zonename).unwrap();
+            writeln!(enum_buf, "/// {}, {}", zone.name, zone.state,)?;
+            writeln!(enum_buf, "#[doc(hidden)]")?;
+            writeln!(enum_buf, "{zonename},")?;
+        }
+
+        writeln!(enum_buf, "}}")?;
+
+        // FromStr impl
+        writeln!(enum_buf, "impl ::std::str::FromStr for {enum_name} {{")?;
+        writeln!(enum_buf, "type Err = ();")?;
+        writeln!(
+            enum_buf,
+            "fn from_str(s: &str) -> Result<Self, ()> {{ match s {{"
+        )?;
+
+        for zonename in &all_zones {
+            // let zone = zones.get(zonename).unwrap();
+            writeln!(enum_buf, "\"{zonename}\" => Ok({enum_name}::{zonename}),")?;
+        }
+        writeln!(enum_buf, "_ => Err(()),")?;
+        writeln!(enum_buf, "}} }} }}")?;
+
+        // As str impl
+        writeln!(enum_buf, "impl {enum_name} {{")?;
+        writeln!(
+            enum_buf,
+            "pub fn details(&self) -> crate::ZoneDetails {{ match self {{"
+        )?;
+
+        for zonename in &all_zones {
+            let zone = zones.get(*zonename).unwrap();
+            writeln!(
+                enum_buf,
+                "{enum_name}::{zonename} => crate::ZoneDetails {{state: \"{}\", zone: \"{}\",\
+                zone_numeric: {},\
+                name: \"{}\", wfo: \"{}\" }},",
+                zone.state,
+                zone.zone,
+                zone.zone.trim_start_matches('0'),
+                zone.name,
+                zone.wfo
+            )?;
+        }
+        writeln!(enum_buf, "}} }}")?;
+
+        // new impl
+        writeln!(
+            enum_buf,
+            "pub fn new(two: &str, numeric: u16) -> Option<Self> {{ "
+        )?;
+        writeln!(enum_buf, "match two {{")?;
+
+        for (two, numerics) in all_zone_map {
+            writeln!(enum_buf, "\"{two}\" => match numeric {{ ")?;
+
+            for num in numerics {
+                if matches!(zone, ZoneType::Zone) {
+                    writeln!(enum_buf, "{num} => Some({enum_name}::{two}{num}),")?;
+                } else {
+                    writeln!(enum_buf, "{num} => Some({enum_name}::{two}Z{num}),")?;
+                }
+            }
+            writeln!(enum_buf, "_ => None,")?;
+
+            writeln!(enum_buf, "}}")?; // end match numeric
+        }
+        writeln!(enum_buf, "_ => None,")?;
+
+        writeln!(enum_buf, "}} }}")?; // end match two and fn new
+
+        writeln!(enum_buf, "}}")?;
+
+        f.write_all(&enum_buf)?;
+        f.flush()?;
+        drop(f);
+
+        let mut cargo = Command::new("rustfmt")
+            .arg("--config")
+            .arg("error_on_line_overflow=true,error_on_unformatted=true,max_width=200")
+            .arg("-v")
+            .arg(gen_rs)
+            .spawn()?;
+
+        cargo.wait()?;
+
+        println!("Generated {} zones for {dst}", all_zones.len());
     }
-
-    let mut all_zones: Vec<_> = zones.keys().collect();
-    all_zones.sort();
-
-    let mut enum_buf = Vec::new();
-    writeln!(
-        enum_buf,
-        "#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)] pub enum ForecastZone {{"
-    )?;
-    for zonename in &all_zones {
-        let zone = zones.get(*zonename).unwrap();
-        writeln!(enum_buf, "/// {}, {}", zone.name, zone.state)?;
-        writeln!(enum_buf, "#[doc(hidden)]")?;
-        writeln!(enum_buf, "{zonename},")?;
-    }
-
-    writeln!(enum_buf, "}}")?;
-
-    // FromStr impl
-    writeln!(enum_buf, "impl ::std::str::FromStr for ForecastZone {{")?;
-    writeln!(enum_buf, "type Err = ();")?;
-    writeln!(
-        enum_buf,
-        "fn from_str(s: &str) -> Result<Self, ()> {{ match s {{"
-    )?;
-
-    for zonename in &all_zones {
-        // let zone = zones.get(zonename).unwrap();
-        writeln!(enum_buf, "\"{zonename}\" => Ok(ForecastZone::{zonename}),")?;
-    }
-    writeln!(enum_buf, "_ => Err(()),")?;
-    writeln!(enum_buf, "}} }} }}")?;
-
-    // As str impl
-    writeln!(enum_buf, "impl ForecastZone {{")?;
-    writeln!(
-        enum_buf,
-        "pub fn details(&self) -> crate::ZoneDetails {{ match self {{"
-    )?;
-
-    for zonename in &all_zones {
-        let zone = zones.get(*zonename).unwrap();
-        writeln!(enum_buf, "ForecastZone::{zonename} => crate::ZoneDetails {{state: \"{}\", zone: \"{}\", zone_numeric: {}, name: \"{}\", wfo: \"{}\" }},",
-            zone.state,
-            zone.zone,
-            zone.zone.trim_start_matches('0'),
-            zone.name,
-            zone.wfo
-    )?;
-    }
-    writeln!(enum_buf, "}} }} }}")?;
-
-    f.write_all(&enum_buf)?;
-    f.flush()?;
-    drop(f);
-
-    let mut cargo = Command::new("rustfmt")
-        .arg("--config")
-        .arg("error_on_line_overflow=true,error_on_unformatted=true,max_width=200")
-        .arg("-v")
-        .arg(gen_rs)
-        .spawn()?;
-
-    cargo.wait()?;
-
-    println!("Generated {} zones", all_zones.len());
 
     Ok(())
 }

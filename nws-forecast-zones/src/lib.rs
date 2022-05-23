@@ -12,6 +12,9 @@
 //! This crate contains information about all 3882 public [forecast zones](ForecastZone),
 //! based on the April 5, 2022 data dump from [NWS's website](https://www.weather.gov/gis/PublicZones).
 //!
+//! And also 632 [coastal](CoastalMarineZone) and [offshore](OffshoreMarineZone) marine zones
+//! (last updated March 22, 2022, downloaded from [here](https://www.weather.gov/gis/MarineZones))
+//!
 //! You can get a [ForecastZone] by calling [`from_str`](ForecastZone::from_str), or by referencing one
 //! of the enum variants.  Note that the variants are not docmented (because there are so many of them),
 //! but you can still access them.
@@ -31,11 +34,73 @@
 //! This crate uses data published from NWS, but is otherwise unaffiliated with the National Weather Service,
 //! and is not an official NWS library.
 
+use std::num::ParseIntError;
+
 mod gen;
+mod gen_mz;
+mod gen_oz;
+
+pub use gen::ForecastZone;
+pub use gen_mz::CoastalMarineZone;
+pub use gen_oz::OffshoreMarineZone;
+
+/// An onshore, offshore, or coastal marine zone
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Zone {
+    /// An onshore forecast zone
+    Forecast(ForecastZone),
+    /// A coastal marine forecast zone
+    CoastalMarine(CoastalMarineZone),
+    /// An offshore marine forecast zone
+    Offshore(OffshoreMarineZone),
+}
+
+impl Zone {
+    /// Get details about this particular zone
+    pub fn details(&self) -> ZoneDetails {
+        match self {
+            Zone::Forecast(z) => z.details(),
+            Zone::CoastalMarine(z) => z.details(),
+            Zone::Offshore(z) => z.details(),
+        }
+    }
+    /// Try to create a new zone
+    ///
+    /// If the given zone isn't a known onshore, offshore, or coastal zone, `None` is returned
+    pub fn new(two: &str, numeric: u16) -> Option<Self> {
+        if let Some(z) = ForecastZone::new(two, numeric) {
+            Some(Zone::Forecast(z))
+        } else if let Some(z) = CoastalMarineZone::new(two, numeric) {
+            Some(Zone::CoastalMarine(z))
+        } else if let Some(z) = OffshoreMarineZone::new(two, numeric) {
+            Some(Zone::Offshore(z))
+        } else {
+            None
+        }
+    }
+}
+impl From<ForecastZone> for Zone {
+    fn from(z: ForecastZone) -> Self {
+        Zone::Forecast(z)
+    }
+}
+
+impl From<CoastalMarineZone> for Zone {
+    fn from(z: CoastalMarineZone) -> Self {
+        Zone::CoastalMarine(z)
+    }
+}
+
+impl From<OffshoreMarineZone> for Zone {
+    fn from(z: OffshoreMarineZone) -> Self {
+        Zone::Offshore(z)
+    }
+}
 
 /// Details about an NWS forecast zone
+#[derive(Debug, Copy, Clone)]
 pub struct ZoneDetails {
-    /// Two-letter state abbreviation
+    /// Two-letter state abbreviation, or a two-letter code for marine forecast zones
     pub state: &'static str,
     /// Three-digit zone number
     pub zone: &'static str,
@@ -47,25 +112,29 @@ pub struct ZoneDetails {
     pub wfo: &'static str,
 }
 
-use std::{num::ParseIntError, str::FromStr};
-
-pub use gen::ForecastZone;
-
 #[cfg_attr(test, derive(Debug))]
 enum ZoneSetEnum {
     /// All zones in a specific state
+    ///
+    /// Only applies for land-based forecast zones (i.e. not Coastal or Offshore zones)
     All(String),
     /// A inclusive range of zones for a specific state
     Range(String, u16, u16),
     /// A specific forecast zone
-    Specific(ForecastZone),
+    Specific(Zone),
     /// A list of zones
     List(Vec<ZoneSetEnum>),
 }
 impl ZoneSetEnum {
-    fn contains(&self, zone: ForecastZone) -> bool {
+    fn contains(&self, zone: Zone) -> bool {
         match self {
-            ZoneSetEnum::All(st) => zone.details().state == st,
+            ZoneSetEnum::All(st) => {
+                if let Zone::Forecast(zone) = zone {
+                    zone.details().state == st
+                } else {
+                    false
+                }
+            }
             ZoneSetEnum::Range(st, lo, hi) => {
                 let d = zone.details();
                 d.state == st && d.zone_numeric >= *lo && d.zone_numeric <= *hi
@@ -92,8 +161,8 @@ pub struct ZoneSet {
 impl ZoneSet {
     /// Is a specific forecast zone in this zone set?
 
-    pub fn contains(&self, zone: ForecastZone) -> bool {
-        self.inner.contains(zone)
+    pub fn contains(&self, zone: impl Into<Zone>) -> bool {
+        self.inner.contains(zone.into())
     }
 }
 
@@ -106,6 +175,8 @@ pub enum ZoneSetError {
     UnexpectedChar(char),
 
     ParsingError,
+
+    NoSuchZone(String, u16),
 }
 
 impl From<ParseIntError> for ZoneSetError {
@@ -213,10 +284,11 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                 match chars.next() {
                     None => {
                         // end of data, so we know we're not the start of a range.  thus we are a specific zone
-                        list.push(ZoneSetEnum::Specific(
-                            ForecastZone::from_str(&format!("{}{:03}", &state[..2], numeric))
-                                .unwrap(),
-                        ));
+                        if let Some(z) = Zone::new(&state[..2], numeric) {
+                            list.push(ZoneSetEnum::Specific(z));
+                        } else {
+                            return Err(ZoneSetError::NoSuchZone(state, numeric));
+                        }
                         break;
                     }
                     Some('>') => {
@@ -227,11 +299,11 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                     Some('-') => {
                         // we've already read the first part of the range (in 'numeric') and we
                         // know we're not the start of a range (nor the end).  so we have a specific zone
-
-                        list.push(ZoneSetEnum::Specific(
-                            ForecastZone::from_str(&format!("{}{:03}", &state[..2], numeric))
-                                .unwrap(),
-                        ));
+                        if let Some(z) = Zone::new(&state[..2], numeric) {
+                            list.push(ZoneSetEnum::Specific(z));
+                        } else {
+                            return Err(ZoneSetError::NoSuchZone(state, numeric));
+                        }
 
                         State::ExpectingStateOrCode(state)
                     }
@@ -282,7 +354,10 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
 mod tests {
 
     use crate::parse_zoneset;
+    use crate::CoastalMarineZone;
     use crate::ForecastZone;
+    use crate::OffshoreMarineZone;
+    use crate::Zone;
 
     #[test]
     fn test_parsing() {
@@ -347,6 +422,26 @@ mod tests {
 
         let a = parse_zoneset("ILZ095>097-MOZ018-019-026-027-034>036-142200-").unwrap();
         println!("{a:?}");
+    }
+
+    #[test]
+    fn test_parsing_marine() {
+        let a = parse_zoneset("GMZ634>636-650-655-675-222130-").unwrap();
+        println!("{a:?}");
+        assert!(a.contains(CoastalMarineZone::GMZ634));
+        assert!(a.contains(Zone::CoastalMarine(CoastalMarineZone::GMZ675)));
+        assert!(a.contains(CoastalMarineZone::GMZ650));
+        assert!(!a.contains(ForecastZone::MA001));
+        assert!(!a.contains(OffshoreMarineZone::AMZ040));
+    }
+
+    #[test]
+    fn test_nopanic() {
+        let a = parse_zoneset("AAZ000-123456-");
+        assert!(a.is_err());
+
+        let a = parse_zoneset("RIZ999-123456-");
+        assert!(a.is_err());
     }
 }
 

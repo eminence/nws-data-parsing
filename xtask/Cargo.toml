@@ -10,4 +10,5 @@ dbase = "0.2.3"
 shapefile = { version = "0.3.0", features = ["geo-types" ] }
 geo = "0.20.1"
 latlon = "0.1.3"
+anyhow = { version = "1.0.57", features = ["backtrace"] }
 #rustfmt-nightly = "1.4.21"

@@ -27,6 +27,16 @@ pub fn main() -> Result<(), anyhow::Error> {
         Zone,
         CoastalMarine,
         OffshoreMarine,
+        /// River forecast centers
+        Rivers,
+        WarningZone,
+        FireZone,
+        /// River basins
+        ///
+        /// ba12my15
+        ///
+        ///
+        RiverBasin,
         // HighSeasMarine,
     }
 
@@ -42,6 +52,10 @@ pub fn main() -> Result<(), anyhow::Error> {
             "oz22mr22/oz22mr22.shp",
             "gen_oz.rs",
         ),
+        (ZoneType::FireZone, "fz22mr22/fz22mr22.shp", "gen_fz.rs"),
+        // (ZoneType::Rivers, "rf12ja05/rf12ja05.shp", "gen_rz.rs"),
+        // (ZoneType::RiverBasin, "ba12my15/ba12my15.shp", "gen_rz.rs"),
+
         // The High Seas Marine data doesn't have an "ID" field, so we can't really do much with these files
         // (
         //     ZoneType::HighSeasMarine,
@@ -68,18 +82,19 @@ pub fn main() -> Result<(), anyhow::Error> {
         for result in reader.iter_shapes_and_records() {
             let (_shape, mut record) = result?;
 
-            // if matches!(zone, ZoneType::HighSeasMarine) {
-            //     println!("{:?}", record);
-            // }
+            if matches!(zone, ZoneType::RiverBasin) {
+                println!("{:?}", record);
+            }
 
-            let zoneid: String = if matches!(zone, ZoneType::Zone) {
-                record.remove("STATE_ZONE").unwrap().try_into().unwrap() // RI004
+            let zoneid = if let Some(st) = record.remove("STATE_ZONE") {
+                st.try_into().unwrap()
             } else {
                 let r = record.remove("ID").or_else(|| record.remove("id"));
 
                 if let Some(FieldValue::Character(Some(c))) = r {
                     c
                 } else {
+                    panic!("{:?}", record);
                     continue;
                 }
             };
@@ -90,20 +105,20 @@ pub fn main() -> Result<(), anyhow::Error> {
                 .unwrap_or_else(|| zoneid[..2].to_string());
             // RI
 
-            let zone_num: String = if matches!(zone, ZoneType::Zone) {
-                record.remove("ZONE").unwrap().try_into().unwrap() // 004
+            let zone_num: String = if let Some(st) = record.remove("ZONE") {
+                st.try_into().unwrap() // 004
             } else {
                 // extract the last 3 digits from ID
                 zoneid[3..6].to_string()
             };
 
             let name: String = record.remove("NAME").unwrap().try_into().unwrap(); // Eastern Kent
-            let wfo: String = if matches!(zone, ZoneType::Zone) {
-                record.remove("CWA").unwrap().try_into().unwrap() // BOX
-            } else {
-                record.remove("WFO").unwrap().try_into().unwrap()
-            };
-            // let zonename: String =
+            let wfo: String = record
+                .remove("CWA")
+                .or_else(|| record.remove("WFO"))
+                .unwrap()
+                .try_into()
+                .unwrap();
 
             let zone = Zone {
                 state,
@@ -131,6 +146,10 @@ pub fn main() -> Result<(), anyhow::Error> {
             ZoneType::Zone => "ForecastZone",
             ZoneType::CoastalMarine => "CoastalMarineZone",
             ZoneType::OffshoreMarine => "OffshoreMarineZone",
+            ZoneType::Rivers => "RiverZone",
+            ZoneType::WarningZone => "WarningZone",
+            ZoneType::FireZone => "FireZone",
+            ZoneType::RiverBasin => "RiverBasin",
         };
         writeln!(
             enum_buf,
@@ -190,11 +209,16 @@ pub fn main() -> Result<(), anyhow::Error> {
         )?;
         writeln!(enum_buf, "match two {{")?;
 
-        for (two, numerics) in all_zone_map {
+        let mut all_zone_map_keys: Vec<String> = all_zone_map.keys().cloned().collect();
+        all_zone_map_keys.sort();
+        for two in all_zone_map_keys {
+            let mut numerics = all_zone_map.remove(&two).unwrap();
             writeln!(enum_buf, "\"{two}\" => match numeric {{ ")?;
 
+            numerics.sort();
+
             for num in numerics {
-                if matches!(zone, ZoneType::Zone) {
+                if matches!(zone, ZoneType::Zone | ZoneType::FireZone) {
                     writeln!(enum_buf, "{num} => Some({enum_name}::{two}{num}),")?;
                 } else {
                     writeln!(enum_buf, "{num} => Some({enum_name}::{two}Z{num}),")?;

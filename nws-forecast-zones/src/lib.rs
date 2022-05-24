@@ -37,10 +37,12 @@
 use std::num::ParseIntError;
 
 mod gen;
+mod gen_fz;
 mod gen_mz;
 mod gen_oz;
 
 pub use gen::ForecastZone;
+pub use gen_fz::FireZone;
 pub use gen_mz::CoastalMarineZone;
 pub use gen_oz::OffshoreMarineZone;
 
@@ -48,11 +50,22 @@ pub use gen_oz::OffshoreMarineZone;
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Zone {
     /// An onshore forecast zone
+    ///
+    /// See <https://www.weather.gov/gis/PublicZones>
     Forecast(ForecastZone),
     /// A coastal marine forecast zone
+    ///
+    /// See <https://www.weather.gov/gis/MarineZones>
     CoastalMarine(CoastalMarineZone),
     /// An offshore marine forecast zone
+    ///
+    /// See <https://www.weather.gov/gis/MarineZones>
     Offshore(OffshoreMarineZone),
+
+    /// A fire weather zone
+    ///
+    /// See <https://www.weather.gov/gis/FireZones>
+    FireZone(FireZone),
 }
 
 impl Zone {
@@ -62,6 +75,7 @@ impl Zone {
             Zone::Forecast(z) => z.details(),
             Zone::CoastalMarine(z) => z.details(),
             Zone::Offshore(z) => z.details(),
+            Zone::FireZone(z) => z.details(),
         }
     }
     /// Try to create a new zone
@@ -74,6 +88,8 @@ impl Zone {
             Some(Zone::CoastalMarine(z))
         } else if let Some(z) = OffshoreMarineZone::new(two, numeric) {
             Some(Zone::Offshore(z))
+        } else if let Some(z) = FireZone::new(two, numeric) {
+            Some(Zone::FireZone(z))
         } else {
             None
         }
@@ -94,6 +110,12 @@ impl From<CoastalMarineZone> for Zone {
 impl From<OffshoreMarineZone> for Zone {
     fn from(z: OffshoreMarineZone) -> Self {
         Zone::Offshore(z)
+    }
+}
+
+impl From<FireZone> for Zone {
+    fn from(z: FireZone) -> Self {
+        Zone::FireZone(z)
     }
 }
 
@@ -122,6 +144,8 @@ enum ZoneSetEnum {
     Range(String, u16, u16),
     /// A specific forecast zone
     Specific(Zone),
+    /// A specifc zone, but that is unknown
+    UnknownZone(String, u16),
     /// A list of zones
     List(Vec<ZoneSetEnum>),
 }
@@ -148,6 +172,7 @@ impl ZoneSetEnum {
                 }
                 false
             }
+            ZoneSetEnum::UnknownZone(..) => false,
         }
     }
 }
@@ -173,6 +198,9 @@ pub enum ZoneSetError {
     OutOfChars,
     /// We encountered some unexpected character
     UnexpectedChar(char),
+
+    /// We encountered an unexpected string
+    UnexpectedString(String),
 
     ParsingError,
 
@@ -277,7 +305,7 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
 
                     State::ExpectingListOrRange(state, numeric)
                 } else {
-                    todo!()
+                    return Err(ZoneSetError::UnexpectedString(n));
                 }
             }
             State::ExpectingListOrRange(state, numeric) => {
@@ -287,7 +315,8 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                         if let Some(z) = Zone::new(&state[..2], numeric) {
                             list.push(ZoneSetEnum::Specific(z));
                         } else {
-                            return Err(ZoneSetError::NoSuchZone(state, numeric));
+                            list.push(ZoneSetEnum::UnknownZone(state, numeric));
+                            // return Err(ZoneSetError::NoSuchZone(state, numeric));
                         }
                         break;
                     }
@@ -302,7 +331,8 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                         if let Some(z) = Zone::new(&state[..2], numeric) {
                             list.push(ZoneSetEnum::Specific(z));
                         } else {
-                            return Err(ZoneSetError::NoSuchZone(state, numeric));
+                            list.push(ZoneSetEnum::UnknownZone(state.clone(), numeric));
+                            // return Err(ZoneSetError::NoSuchZone(state, numeric));
                         }
 
                         State::ExpectingStateOrCode(state)
@@ -335,7 +365,7 @@ pub fn parse_zoneset(mut range: &str) -> Result<ZoneSet, ZoneSetError> {
                     let numeric = t.parse()?;
                     State::ExpectingListOrRange(state, numeric)
                 } else {
-                    todo!("{:?}", t)
+                    return Err(ZoneSetError::UnexpectedString(t));
                 }
             }
         };
@@ -433,15 +463,30 @@ mod tests {
         assert!(a.contains(CoastalMarineZone::GMZ650));
         assert!(!a.contains(ForecastZone::MA001));
         assert!(!a.contains(OffshoreMarineZone::AMZ040));
+
+        let a =
+            parse_zoneset("NYZ176-178-MAZ016-IL014-TNZ027-NJZ106-GAZ044-MD014-230500-").unwrap();
+        println!("{a:?}");
     }
 
     #[test]
     fn test_nopanic() {
-        let a = parse_zoneset("AAZ000-123456-");
-        assert!(a.is_err());
+        let a = parse_zoneset("AAZ000-123456-").unwrap();
+        println!("{a:?}");
 
-        let a = parse_zoneset("RIZ999-123456-");
-        assert!(a.is_err());
+        let a = parse_zoneset("RIZ999-123456-").unwrap();
+        println!("{a:?}");
+
+        let a =
+            parse_zoneset("ANZ835-935-AMZ111-154-330-350-352-354-370-450-454-472-230500-").unwrap();
+        println!("{a:?}");
+
+        let a = parse_zoneset("ANZ600-241415-").unwrap();
+        println!("{a:?}");
+
+        parse_zoneset("LEZ161-240830-").unwrap();
+        parse_zoneset("LSZ261-241000-").unwrap();
+        parse_zoneset("LMZ867-665-643>646-240300-").unwrap();
     }
 }
 
